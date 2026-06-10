@@ -181,47 +181,50 @@ class TestJudgeScorer:
         assert result.value == INCORRECT
         assert result.metadata == {"verdict": verdict, "verdict_source": "structured"}
 
-    async def test_falls_back_to_regex_for_non_structured_output(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # given a grader that ignores the schema and returns free text
-        _patch_grader(monkeypatch, "Reasoning here.\nresult: correct")
-        # when
-        sut = semantic_judge_scorer()
-        result = await _score(
-            sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
-        )
-        # then the regex fallback recovers the verdict
-        assert result.value == CORRECT
-        assert result.metadata == {"verdict": "correct", "verdict_source": "regex_fallback"}
-
     @pytest.mark.parametrize(
-        "completion, expected_verdict",
+        "completion, expected_value, expected_verdict",
         [
-            ("Reasoning here.\nresult: incorrect", "incorrect"),
-            ("no parseable verdict in this text", None),
+            ("Reasoning here.\nresult: correct", CORRECT, "correct"),
+            ("Reasoning here.\nresult: incorrect", INCORRECT, "incorrect"),
+            ("Reasoning here.\nresult: unsure", INCORRECT, "unsure"),
         ],
+        ids=["non_structured_output", "incorrect", "unsure"],
     )
-    async def test_falls_back_to_regex_scores_incorrect(
+    async def test_regex_fallback_scores(
         self,
         monkeypatch: pytest.MonkeyPatch,
         completion: str,
-        expected_verdict: str | None,
+        expected_value: str,
+        expected_verdict: str,
     ) -> None:
-        # given non-structured grader output that is not a correct verdict
-        # (a parsed "incorrect", or nothing parseable at all)
         _patch_grader(monkeypatch, completion)
-        # when
         sut = semantic_judge_scorer()
         result = await _score(
             sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
         )
-        # then it scores incorrect
-        assert result.value == INCORRECT
+        assert result.value == expected_value
         assert result.metadata == {
             "verdict": expected_verdict,
             "verdict_source": "regex_fallback",
         }
+
+    @pytest.mark.parametrize(
+        "completion, match",
+        [
+            ("no parseable verdict in this text", "no parseable verdict"),
+            ("result: maybe", "no parseable verdict"),
+        ],
+        ids=["no_parseable_verdict", "unrecognized_word"],
+    )
+    async def test_regex_fallback_raises_on_unusable_verdict(
+        self, monkeypatch: pytest.MonkeyPatch, completion: str, match: str
+    ) -> None:
+        _patch_grader(monkeypatch, completion)
+        sut = semantic_judge_scorer()
+        with pytest.raises(ValueError, match=match):
+            await _score(
+                sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
+            )
 
     async def test_empty_answer_scores_incorrect(
         self, monkeypatch: pytest.MonkeyPatch

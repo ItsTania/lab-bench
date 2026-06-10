@@ -122,6 +122,12 @@ def _judge_score(prompt_template: str) -> Scorer:
             explanation = result.completion
             verdict_source = "regex_fallback"
 
+        if verdict is None:
+            raise ValueError(
+                f"Grader returned no parseable verdict (tried structured and "
+                f"regex). Raw grader output: {result.completion[:500]}"
+            )
+
         value = CORRECT if verdict == JUDGE_VERDICT_CORRECT else INCORRECT
         return Score(
             value=value,
