@@ -388,35 +388,29 @@ class TestCloningScorer:
         assert result.value == INCORRECT
         assert result.metadata == {"cloning_score": 0.0}
 
-    async def test_incorrect_without_files_path_or_id(self) -> None:
+    async def test_raises_without_files_path_or_id(self) -> None:
         # given metadata missing files_path and id
         sut = cloning_scorer()
         state = _task_state("<protocol>assemble</protocol>", {"tag": "cloning"})
 
-        # when
-        result = await _score(sut, state, Target(""))
+        # when/then — infrastructure error, not a model verdict
+        with pytest.raises(ValueError, match="files_path.*and.*id"):
+            await _score(sut, state, Target(""))
 
-        # then it fails closed before resolving or scoring
-        assert result.value == INCORRECT
-        assert "files_path and id" in (result.explanation or "")
-
-    async def test_incorrect_when_ground_truth_missing(
+    async def test_raises_when_ground_truth_missing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # given the reference assembly cannot be resolved
         monkeypatch.setattr("evals.utils.resolve_file_path", lambda filename, _: None)
 
-        # when
+        # when/then — infrastructure error, not a model verdict
         sut = cloning_scorer()
         state = _task_state(
             "<protocol>assemble</protocol>",
             {"tag": "cloning", "id": "clone_1", "files_path": str(tmp_path)},
         )
-        result = await _score(sut, state, Target(""))
-
-        # then
-        assert result.value == INCORRECT
-        assert "Ground truth file not found" in (result.explanation or "")
+        with pytest.raises(ValueError, match="Ground truth file.*could not be resolved"):
+            await _score(sut, state, Target(""))
 
 
 class TestSeqqa2Scorer:
@@ -482,7 +476,7 @@ class TestSeqqa2Scorer:
         assert result.value == CORRECT
         assert captured == {"sequence": "ACTG"}
 
-    async def test_incorrect_for_unknown_validator_type(self) -> None:
+    async def test_raises_for_unknown_validator_type(self) -> None:
         sut = seqqa2_scorer()
         state = _task_state(
             "<answer>x</answer>",
@@ -492,16 +486,16 @@ class TestSeqqa2Scorer:
                 "answer_regex": "(?P<answer>x)",
             },
         )
-        result = await _score(sut, state, Target(""))
-        assert result.value == INCORRECT
-        assert "No validator found" in (result.explanation or "")
+        # infrastructure error, not a model verdict
+        with pytest.raises(ValueError, match="No SeqQA2 validator.*does_not_exist"):
+            await _score(sut, state, Target(""))
 
-    async def test_incorrect_when_type_missing(self) -> None:
+    async def test_raises_when_type_missing(self) -> None:
         sut = seqqa2_scorer()
         state = _task_state("<answer>x</answer>", {"tag": "seqqa2"})
-        result = await _score(sut, state, Target(""))
-        assert result.value == INCORRECT
-        assert "question type" in (result.explanation or "")
+        # infrastructure error, not a model verdict
+        with pytest.raises(ValueError, match="'type'.*sample metadata"):
+            await _score(sut, state, Target(""))
 
     async def test_fail_closed_when_path_param_unresolved(
         self, monkeypatch: pytest.MonkeyPatch
@@ -524,11 +518,9 @@ class TestSeqqa2Scorer:
                 "validator_params": {"reference_path": "missing.fa"},
             },
         )
-        result = await _score(sut, state, Target(""))
-
-        # then it fails closed rather than calling the validator
-        assert result.value == INCORRECT
-        assert "File not found: missing.fa" in (result.explanation or "")
+        # then it raises rather than calling the validator
+        with pytest.raises(ValueError, match="reference_path.*missing.fa"):
+            await _score(sut, state, Target(""))
 
 
 class TestMultiTagsScorer:
