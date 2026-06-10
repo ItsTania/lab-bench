@@ -120,7 +120,7 @@ def _judge_score(prompt_template: str) -> Scorer:
         except ValidationError:
             verdict = parse_judge_verdict(result.completion)
             explanation = result.completion
-            verdict_source = "fallback"
+            verdict_source = "regex_fallback"
 
         value = CORRECT if verdict == JUDGE_VERDICT_CORRECT else INCORRECT
         return Score(

@@ -193,7 +193,7 @@ class TestJudgeScorer:
         )
         # then the regex fallback recovers the verdict
         assert result.value == CORRECT
-        assert result.metadata == {"verdict": "correct", "verdict_source": "fallback"}
+        assert result.metadata == {"verdict": "correct", "verdict_source": "regex_fallback"}
 
     @pytest.mark.parametrize(
         "completion, expected_verdict",
@@ -220,7 +220,7 @@ class TestJudgeScorer:
         assert result.value == INCORRECT
         assert result.metadata == {
             "verdict": expected_verdict,
-            "verdict_source": "fallback",
+            "verdict_source": "regex_fallback",
         }
 
     async def test_empty_answer_scores_incorrect(
