@@ -181,47 +181,50 @@ class TestJudgeScorer:
         assert result.value == INCORRECT
         assert result.metadata == {"verdict": verdict, "verdict_source": "structured"}
 
-    async def test_falls_back_to_regex_for_non_structured_output(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # given a grader that ignores the schema and returns free text
-        _patch_grader(monkeypatch, "Reasoning here.\nresult: correct")
-        # when
-        sut = semantic_judge_scorer()
-        result = await _score(
-            sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
-        )
-        # then the regex fallback recovers the verdict
-        assert result.value == CORRECT
-        assert result.metadata == {"verdict": "correct", "verdict_source": "fallback"}
-
     @pytest.mark.parametrize(
-        "completion, expected_verdict",
+        "completion, expected_value, expected_verdict",
         [
-            ("Reasoning here.\nresult: incorrect", "incorrect"),
-            ("no parseable verdict in this text", None),
+            ("Reasoning here.\nresult: correct", CORRECT, "correct"),
+            ("Reasoning here.\nresult: incorrect", INCORRECT, "incorrect"),
+            ("Reasoning here.\nresult: unsure", INCORRECT, "unsure"),
         ],
+        ids=["non_structured_output", "incorrect", "unsure"],
     )
-    async def test_falls_back_to_regex_scores_incorrect(
+    async def test_regex_fallback_scores(
         self,
         monkeypatch: pytest.MonkeyPatch,
         completion: str,
-        expected_verdict: str | None,
+        expected_value: str,
+        expected_verdict: str,
     ) -> None:
-        # given non-structured grader output that is not a correct verdict
-        # (a parsed "incorrect", or nothing parseable at all)
         _patch_grader(monkeypatch, completion)
-        # when
         sut = semantic_judge_scorer()
         result = await _score(
             sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
         )
-        # then it scores incorrect
-        assert result.value == INCORRECT
+        assert result.value == expected_value
         assert result.metadata == {
             "verdict": expected_verdict,
-            "verdict_source": "fallback",
+            "verdict_source": "regex_fallback",
         }
+
+    @pytest.mark.parametrize(
+        "completion, match",
+        [
+            ("no parseable verdict in this text", "no parseable verdict"),
+            ("result: maybe", "no parseable verdict"),
+        ],
+        ids=["no_parseable_verdict", "unrecognized_word"],
+    )
+    async def test_regex_fallback_raises_on_unusable_verdict(
+        self, monkeypatch: pytest.MonkeyPatch, completion: str, match: str
+    ) -> None:
+        _patch_grader(monkeypatch, completion)
+        sut = semantic_judge_scorer()
+        with pytest.raises(ValueError, match=match):
+            await _score(
+                sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
+            )
 
     async def test_empty_answer_scores_incorrect(
         self, monkeypatch: pytest.MonkeyPatch
@@ -388,35 +391,29 @@ class TestCloningScorer:
         assert result.value == INCORRECT
         assert result.metadata == {"cloning_score": 0.0}
 
-    async def test_incorrect_without_files_path_or_id(self) -> None:
+    async def test_raises_without_files_path_or_id(self) -> None:
         # given metadata missing files_path and id
         sut = cloning_scorer()
         state = _task_state("<protocol>assemble</protocol>", {"tag": "cloning"})
 
-        # when
-        result = await _score(sut, state, Target(""))
+        # when/then — infrastructure error, not a model verdict
+        with pytest.raises(ValueError, match="files_path.*and.*id"):
+            await _score(sut, state, Target(""))
 
-        # then it fails closed before resolving or scoring
-        assert result.value == INCORRECT
-        assert "files_path and id" in (result.explanation or "")
-
-    async def test_incorrect_when_ground_truth_missing(
+    async def test_raises_when_ground_truth_missing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # given the reference assembly cannot be resolved
         monkeypatch.setattr("evals.utils.resolve_file_path", lambda filename, _: None)
 
-        # when
+        # when/then — infrastructure error, not a model verdict
         sut = cloning_scorer()
         state = _task_state(
             "<protocol>assemble</protocol>",
             {"tag": "cloning", "id": "clone_1", "files_path": str(tmp_path)},
         )
-        result = await _score(sut, state, Target(""))
-
-        # then
-        assert result.value == INCORRECT
-        assert "Ground truth file not found" in (result.explanation or "")
+        with pytest.raises(ValueError, match="Ground truth file.*could not be resolved"):
+            await _score(sut, state, Target(""))
 
 
 class TestSeqqa2Scorer:
@@ -482,7 +479,7 @@ class TestSeqqa2Scorer:
         assert result.value == CORRECT
         assert captured == {"sequence": "ACTG"}
 
-    async def test_incorrect_for_unknown_validator_type(self) -> None:
+    async def test_raises_for_unknown_validator_type(self) -> None:
         sut = seqqa2_scorer()
         state = _task_state(
             "<answer>x</answer>",
@@ -492,16 +489,16 @@ class TestSeqqa2Scorer:
                 "answer_regex": "(?P<answer>x)",
             },
         )
-        result = await _score(sut, state, Target(""))
-        assert result.value == INCORRECT
-        assert "No validator found" in (result.explanation or "")
+        # infrastructure error, not a model verdict
+        with pytest.raises(ValueError, match="No SeqQA2 validator.*does_not_exist"):
+            await _score(sut, state, Target(""))
 
-    async def test_incorrect_when_type_missing(self) -> None:
+    async def test_raises_when_type_missing(self) -> None:
         sut = seqqa2_scorer()
         state = _task_state("<answer>x</answer>", {"tag": "seqqa2"})
-        result = await _score(sut, state, Target(""))
-        assert result.value == INCORRECT
-        assert "question type" in (result.explanation or "")
+        # infrastructure error, not a model verdict
+        with pytest.raises(ValueError, match="'type'.*sample metadata"):
+            await _score(sut, state, Target(""))
 
     async def test_fail_closed_when_path_param_unresolved(
         self, monkeypatch: pytest.MonkeyPatch
@@ -524,11 +521,9 @@ class TestSeqqa2Scorer:
                 "validator_params": {"reference_path": "missing.fa"},
             },
         )
-        result = await _score(sut, state, Target(""))
-
-        # then it fails closed rather than calling the validator
-        assert result.value == INCORRECT
-        assert "File not found: missing.fa" in (result.explanation or "")
+        # then it raises rather than calling the validator
+        with pytest.raises(ValueError, match="reference_path.*missing.fa"):
+            await _score(sut, state, Target(""))
 
 
 class TestMultiTagsScorer:

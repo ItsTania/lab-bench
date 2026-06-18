@@ -120,7 +120,13 @@ def _judge_score(prompt_template: str) -> Scorer:
         except ValidationError:
             verdict = parse_judge_verdict(result.completion)
             explanation = result.completion
-            verdict_source = "fallback"
+            verdict_source = "regex_fallback"
+
+        if verdict is None:
+            raise ValueError(
+                f"Grader returned no parseable verdict (tried structured and "
+                f"regex). Raw grader output: {result.completion[:500]}"
+            )
 
         value = CORRECT if verdict == JUDGE_VERDICT_CORRECT else INCORRECT
         return Score(
@@ -191,17 +197,20 @@ def cloning_scorer() -> Scorer:
         question_id = cast(str | None, metadata.get("id"))
 
         if not files_path_str or not question_id:
-            return Score(
-                value=INCORRECT,
-                explanation="Cloning evaluation requires files_path and id metadata.",
+            raise ValueError(
+                f"Cloning scorer requires 'files_path' and 'id' in sample metadata, "
+                f"but got files_path={files_path_str!r}, id={question_id!r}. "
+                f"This usually means the dataset loader did not populate the "
+                f"sample metadata correctly."
             )
 
         ground_truth_filename = f"{question_id}_assembled.fa"
         ground_truth_path = resolve_file_path(ground_truth_filename, None)
         if ground_truth_path is None:
-            return Score(
-                value=INCORRECT,
-                explanation=f"Ground truth file not found: {ground_truth_filename}",
+            raise ValueError(
+                f"Ground truth file '{ground_truth_filename}' could not be resolved "
+                f"for question {question_id!r}. The file may not have been downloaded "
+                f"or the local cache at ~/.cache/labbench2/ may be incomplete."
             )
 
         answer = state.output.completion
@@ -234,16 +243,19 @@ def seqqa2_scorer() -> Scorer:
         metadata = state.metadata or {}
         question_type = cast(str | None, metadata.get("type"))
         if not question_type:
-            return Score(
-                value=INCORRECT,
-                explanation="SeqQA2 evaluation requires question type metadata.",
+            raise ValueError(
+                f"SeqQA2 scorer requires 'type' in sample metadata, "
+                f"but got type={question_type!r}. "
+                f"This usually means the dataset loader did not populate the "
+                f"sample metadata correctly."
             )
 
         validator = VALIDATORS.get(question_type)
         if validator is None:
-            return Score(
-                value=INCORRECT,
-                explanation=f"No validator found for type: {question_type}",
+            raise ValueError(
+                f"No SeqQA2 validator registered for question type {question_type!r}. "
+                f"Available types: {sorted(VALIDATORS)}. "
+                f"This type may not be implemented yet."
             )
 
         raw_answer = state.output.completion
@@ -272,9 +284,11 @@ def seqqa2_scorer() -> Scorer:
             if key.endswith("_path") and isinstance(value, str):
                 resolved = resolve_file_path(value, files_path)
                 if resolved is None:
-                    return Score(
-                        value=INCORRECT,
-                        explanation=f"File not found: {value}",
+                    raise ValueError(
+                        f"SeqQA2 validator param '{key}' references file "
+                        f"{value!r} which could not be resolved. The file may "
+                        f"not have been downloaded or the local cache at "
+                        f"~/.cache/labbench2/ may be incomplete."
                     )
                 kwargs[key] = resolved
 
