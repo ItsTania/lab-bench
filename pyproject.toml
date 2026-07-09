@@ -139,6 +139,8 @@ dependencies = [
     "inspect_ai>=0.3.234",
     "pyyaml>=5.1.0",
     "datasets>=4.8.5",
+    "pillow",
+    "pydantic"
 ]
 
 [project.urls]

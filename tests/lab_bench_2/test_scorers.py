@@ -222,9 +222,7 @@ class TestJudgeScorer:
         _patch_grader(monkeypatch, completion)
         sut = semantic_judge_scorer()
         with pytest.raises(ValueError, match=match):
-            await _score(
-                sut, _task_state("answer", {"tag": "litqa3"}), Target("ref")
-            )
+            await _score(sut, _task_state("answer", {"tag": "litqa3"}), Target("ref"))
 
     async def test_empty_answer_scores_incorrect(
         self, monkeypatch: pytest.MonkeyPatch
@@ -412,7 +410,9 @@ class TestCloningScorer:
             "<protocol>assemble</protocol>",
             {"tag": "cloning", "id": "clone_1", "files_path": str(tmp_path)},
         )
-        with pytest.raises(ValueError, match="Ground truth file.*could not be resolved"):
+        with pytest.raises(
+            ValueError, match="Ground truth file.*could not be resolved"
+        ):
             await _score(sut, state, Target(""))
 
 
